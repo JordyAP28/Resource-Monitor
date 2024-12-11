@@ -14,7 +14,7 @@ CREATE TABLE Ventas (
     Fecha DATETIME DEFAULT GETDATE()
 );
 
--- Tabla para registrar auditorías de operaciones
+-- Tabla auditoria
 CREATE TABLE Auditoría (
     ID INT IDENTITY(1,1),
     Tabla NVARCHAR(50),
@@ -23,7 +23,7 @@ CREATE TABLE Auditoría (
     Fecha DATETIME DEFAULT GETDATE()
 );
 
--- Tabla para registrar uso de recursos del sistema
+-- Tabla recursos
 CREATE TABLE Recursos (
     ID INT IDENTITY(1,1),
     CPU_Usage DECIMAL(5,2),
@@ -31,38 +31,9 @@ CREATE TABLE Recursos (
     Fecha DATETIME DEFAULT GETDATE()
 );
 
--- Trigger para tener auditoria de operaciones en la tabla 'Ventas'
-CREATE TRIGGER AuditarOperaciones
-ON Ventas
-AFTER INSERT, UPDATE, DELETE
-AS
-BEGIN
-    DECLARE @FilasAfectadas INT = @@ROWCOUNT;
-    DECLARE @CPU DECIMAL(5,2), @Memoria DECIMAL(5,2);
 
-    -- Se obtiene los valores usados del CPU
-    SELECT @CPU = SUM(cpu_time) / 1000.0 
-    FROM sys.dm_exec_requests
-    WHERE session_id = @@SPID;
-
-	-- Se obtiene los valores usados de la memoria
-    SELECT @Memoria = SUM(virtual_memory_committed_kb) / 1024.0 / 1024.0
-    FROM sys.dm_os_memory_clerks;
-
-    -- Registrar operaciones intensivas
-    IF @FilasAfectadas > 5 
-    BEGIN
-        INSERT INTO Auditoría (Tabla, Operación, FilasAfectadas)
-        VALUES ('Ventas', EVENTDATA().value('(/EVENT_INSTANCE/EventType)[1]', 'NVARCHAR(50)'), @FilasAfectadas);
-
-        -- Registrar métricas en la tabla Recursos
-        INSERT INTO Recursos (CPU_Usage, Memory_Usage)
-        VALUES (@CPU, @Memoria);
-
-        PRINT 'Uso de CPU registrado: ' + CAST(@CPU AS NVARCHAR(50)) + ' segundos';
-        PRINT 'Memoria utilizada registrada: ' + CAST(@Memoria AS NVARCHAR(50)) + ' MB';
-    END;
-END;
+DROP TRIGGER IF EXISTS AuditarOperaciones;
+DROP PROCEDURE IF EXISTS RegistrarVenta;
 
 -- Procedimiento para registrar ventas con validación de límite de crédito
 CREATE PROCEDURE RegistrarVenta
@@ -76,12 +47,10 @@ BEGIN
     -- Calcular ventas acumuladas
     SELECT @VentasTotales = ISNULL(SUM(Monto), 0) FROM Ventas WHERE ID_Cliente = @ID_Cliente;
 
-    -- Se obtiene los valores utilizados del CPU
+    -- Se obtiene los valores utilizados del CPU y la memoria
     SELECT @CPU = SUM(cpu_time) / 1000.0 
     FROM sys.dm_exec_requests
     WHERE session_id = @@SPID;
-
-	-- Se obtiene los valores utilizados de la memoria
     SELECT @Memoria = SUM(virtual_memory_committed_kb) / 1024.0 / 1024.0
     FROM sys.dm_os_memory_clerks;
 
@@ -109,3 +78,37 @@ BEGIN
         PRINT 'Memoria utilizada registrada: ' + CAST(@Memoria AS NVARCHAR(50)) + ' MB';
     END;
 END;
+
+
+-- Clientes
+INSERT INTO Clientes (Nombre, Email) VALUES ('Hugo Alvarado', 'hugoalvarado@example.com');
+INSERT INTO Clientes (Nombre, Email) VALUES ('María López', 'marialopez@example.com');
+INSERT INTO Clientes (Nombre, Email) VALUES ('Carlos Gómez', 'carlosgomez@example.com');
+
+
+-- Se registra la venta para el cliente 1 (acumulado: 2000)
+EXEC RegistrarVenta @ID_Cliente = 1, @Monto = 2000;
+
+-- Se registra la venta para el cliente 2 (acumulado: 8000)
+EXEC RegistrarVenta @ID_Cliente = 2, @Monto = 3000;
+EXEC RegistrarVenta @ID_Cliente = 2, @Monto = 5000;
+
+-- Se intenta registrar una venta para el cliente 1 que excede el limite (acumulado: 11000)
+EXEC RegistrarVenta @ID_Cliente = 1, @Monto = 9000;
+
+-- Inserción masiva (acumulado: 5000)
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 500;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 900;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 800;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 600;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 900;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 400;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 300;
+EXEC RegistrarVenta @ID_Cliente = 3, @Monto = 700;
+
+
+select * from ventas;
+select * from clientes;
+select * from Auditoría;
+select * from recursos;
+
